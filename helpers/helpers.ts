@@ -39,9 +39,6 @@ export interface SignerStuff<N extends Network, C extends Chain = Chain> {
 export async function getSigner<N extends Network, C extends Chain>(
   chain: ChainContext<N, C>,
 ): Promise<SignerStuff<N, C>> {
-  // Read in from `.env`
-  (await import("dotenv")).config();
-
   let signer: Signer;
   const platform = chain.platform.utils()._platform;
   switch (platform) {

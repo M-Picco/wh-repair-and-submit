@@ -8,11 +8,12 @@ npx tsx src/repair.ts '0x3ad91ec530187bb2ce3b394d587878cd1e9e037a97e51fbc34af89b
 ```
 */
 
-import type { VAA, Wormhole, WormholeCore } from "@wormhole-foundation/sdk";
+import type { VAA, Wormhole, WormholeConfigOverrides, WormholeCore } from "@wormhole-foundation/sdk";
 import { SignatureUtils, deserialize, encoding, keccak256, serialize, signSendWait, wormhole } from "@wormhole-foundation/sdk";
 import evm from "@wormhole-foundation/sdk/evm";
 import solana from "@wormhole-foundation/sdk/solana";
 import { getSigner } from "./helpers/helpers";
+import "dotenv/config";
 
 function repairVaa(vaa: VAA<"Uint8Array">, guardianSetData: WormholeCore.GuardianSet) {
     if (vaa.guardianSet === guardianSetData.index) return serialize(vaa);
@@ -65,14 +66,27 @@ async function getVaaFixer(wh: Wormhole) {
     }
 }
 
+const getOverrides = (): WormholeConfigOverrides<"Mainnet"> => {
+    return {
+        chains: {
+            ...(process.env.ETH_RPC_URL ? { Ethereum: { rpc: process.env.ETH_RPC_URL } } : {}),
+            ...(process.env.SOL_RPC_URL ? { Solana: { rpc: process.env.SOL_RPC_URL } } : {}),
+        }
+    }
+}
+
 const txs = process.argv.slice(2).pop()?.split(",") || [];
 
 (async () => {
-    const wh = await wormhole("Mainnet", [evm, solana]);
+    const wh = await wormhole("Mainnet", [evm, solana], getOverrides());
     const fixVaa = await getVaaFixer(wh);
 
     while (txs.length > 0) {
-        const { txHash, vaa } = await fixVaa(txs.pop()!);
+        const { txHash, vaa, repaired } = await fixVaa(txs.pop()!);
+        if (!repaired) {
+            console.log(`${txHash} - not repaired`);
+            continue;
+        }
 
         const parsed = await deserialize("TokenBridge:Transfer", vaa);
         const destChain = wh.getChain(parsed.payload.to.chain);
@@ -82,12 +96,12 @@ const txs = process.argv.slice(2).pop()?.split(",") || [];
 
         const submitTxs = await tbr.redeem(signer.address.address, parsed);
 
-        let c = 0;
-        for await (const tx of submitTxs) {
-            c++;
-        }
-        console.log(`${txHash} - signer ${signer.address.address.toString()} prepared ${c} txs`);
-        // const ids = await signSendWait(destChain, submitTxs, signer.signer);
-        // console.log(`${txHash} - [${ids.map(id => id.txid).join(", ")}]`);
+        // let c = 0;
+        // for await (const tx of submitTxs) {
+        //     c++;
+        // }
+        // console.log(`${txHash} - signer ${signer.address.address.toString()} prepared ${c} txs`);
+        const ids = await signSendWait(destChain, submitTxs, signer.signer);
+        console.log(`Redeemed ${txHash} - txs [${ids.map(id => id.txid).join(", ")}]`);
     }
 })();
